@@ -1,0 +1,73 @@
+{
+  "version": "1.0",
+  "total_max": 100,
+  "dimensions": {
+    "title_match": {
+      "max_points": 25,
+      "rules": [
+        { "pattern": ["VP Sales", "VP Revenue", "VP Business Ops", "VP Revenue Operations", "VP Business Operations", "Director Sales", "Director Revenue", "Director Revenue Operations", "Director Business Operations"], "points": 25 },
+        { "pattern": ["Operations Manager", "Head of Ops", "Head of Operations", "Head of Revenue Operations", "Head of Sales Operations"], "points": 20 },
+        { "pattern": ["GTM", "Go-to-Market", "Growth", "Demand Gen", "Demand Generation"], "points": 15 },
+        { "pattern": ["Manager Sales Ops", "Manager Revenue Ops", "Manager Operations", "Sales Operations Manager", "Revenue Operations Manager"], "points": 10 },
+        { "pattern": ["Analyst", "Coordinator", "Specialist", "Associate"], "points": 5 },
+        { "default": true, "points": 3 }
+      ]
+    },
+    "company_fit": {
+      "max_points": 25,
+      "rules": {
+        "industry_b2b_saas": { "points": 10, "match": ["B2B SaaS", "SaaS", "Software", "Information Technology", "Computer Software", "Internet"] },
+        "employee_100_1000": { "points": 8, "match_range": [100, 1000], "field": "employee_count" },
+        "revenue_50m_500m": { "points": 5, "match": ["$50M-$100M", "$100M-$250M", "$250M-$500M", "$50M-$500M"] },
+        "us_based": { "points": 2, "match_countries": ["US", "United States", "USA"] }
+      }
+    },
+    "signal_strength": {
+      "max_points": 25,
+      "rules": {
+        "page_views": {
+          "1": 3,
+          "2-3": 8,
+          "4+": 12
+        },
+        "hot_pages": {
+          "patterns": ["pricing", "demo", "case-study", "case-studies", "case_study", "request-demo", "book-demo", "schedule-demo", "free-trial"],
+          "points_each": 5,
+          "max_bonus": 10
+        },
+        "recency": {
+          "today": 3,
+          "this_week": 2,
+          "this_month": 1
+        },
+        "return_visit_bonus": 3
+      }
+    },
+    "engagement": {
+      "max_points": 25,
+      "rules": {
+        "multiple_visits": {
+          "2": 5,
+          "3+": 10
+        },
+        "linkedin_engagement": {
+          "points": 8,
+          "description": "Engaged with Magnetiz content on LinkedIn"
+        },
+        "content_interaction": {
+          "points": 7,
+          "description": "Downloaded content, clicked ad, attended webinar"
+        }
+      }
+    }
+  },
+  "signal_stacking_bonus": {
+    "2_signals": 5,
+    "3_plus_signals": 10
+  },
+  "routing": {
+    "outreach": { "min": 75, "max": 100, "action": "Push to GoExtrovert via API" },
+    "retarget": { "min": 50, "max": 74, "action": "Add to retarget_audience for LinkedIn Ads" },
+    "monitoring": { "min": 0, "max": 49, "action": "Hold in monitoring pool, re-score on return visit" }
+  }
+}
