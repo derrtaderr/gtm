@@ -16,26 +16,32 @@ RUN npm run build
 # ---- Runtime Stage ----
 FROM node:20-slim
 
-WORKDIR /app
-
 # Install dependencies needed by Claude Agent SDK and MCP servers
 RUN apt-get update && apt-get install -y --no-install-recommends \
   ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 
-COPY package.json package-lock.json ./
+# Pre-install postgres MCP server globally (as root, before switching user)
+RUN npm install -g @modelcontextprotocol/server-postgres
 
-# Install production deps + pre-install the postgres MCP server globally
-# so we don't need to download it via npx at runtime
-RUN npm ci --omit=dev \
-  && npm install -g @modelcontextprotocol/server-postgres
+# Create app dir with the non-root `node` user (UID 1000, built into the image)
+WORKDIR /app
+RUN chown -R node:node /app
 
-COPY --from=builder /app/dist ./dist
+USER node
+
+COPY --chown=node:node package.json package-lock.json ./
+RUN npm ci --omit=dev
+
+COPY --chown=node:node --from=builder /app/dist ./dist
 
 # Copy non-TS assets that the runtime needs
-COPY src/prompts ./dist/prompts
-COPY src/config ./dist/config
+COPY --chown=node:node src/prompts ./dist/prompts
+COPY --chown=node:node src/config ./dist/config
 
+# Claude Code SDK requires HOME to point to a writable dir
+# /home/node is created by the base image and owned by `node`
+ENV HOME=/home/node
 ENV NODE_ENV=production
 EXPOSE 3000
 

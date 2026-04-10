@@ -50,14 +50,6 @@ export async function runGTMPipeline(
         permissionMode: 'bypassPermissions',
         // Explicitly use Node runtime — auto-detection can fail in slim containers
         executable: 'node',
-        // Use /tmp as cwd so the SDK has a writable directory for any temporary files
-        cwd: '/tmp',
-        // Pass through env vars the SDK needs + enable SDK debug logging
-        env: {
-          ...process.env,
-          HOME: '/tmp',
-          DEBUG_CLAUDE_AGENT_SDK: '1',
-        },
         // Capture stderr from the Claude Code subprocess for debugging
         stderr: (data: string) => {
           console.error(`[GTM:stderr] ${data.trimEnd()}`);
