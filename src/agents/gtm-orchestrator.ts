@@ -11,6 +11,7 @@ import { query, type SDKMessage, type SDKResultMessage } from '@anthropic-ai/cla
 import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { databaseServer } from '../mcp/database-server.js';
 import { clayServer } from '../mcp/clay-server.js';
 import { proxycurlServer } from '../mcp/proxycurl-server.js';
 import { goextrovertServer } from '../mcp/goextrovert-server.js';
@@ -55,14 +56,7 @@ export async function runGTMPipeline(
           console.error(`[GTM:stderr] ${data.trimEnd()}`);
         },
         mcpServers: {
-          database: {
-            // Use globally-installed postgres MCP server (pre-installed in Dockerfile)
-            // Falls back to npx in dev environments where it's not globally installed.
-            command: process.env.NODE_ENV === 'production' ? 'mcp-server-postgres' : 'npx',
-            args: process.env.NODE_ENV === 'production'
-              ? [process.env.DATABASE_URL!]
-              : ['-y', '@modelcontextprotocol/server-postgres', process.env.DATABASE_URL!],
-          },
+          database: databaseServer,
           clay: clayServer,
           proxycurl: proxycurlServer,
           goextrovert: goextrovertServer,
@@ -84,7 +78,7 @@ export async function runGTMPipeline(
         },
         allowedTools: [
           'Agent',
-          'mcp__database__query',
+          'mcp__database__db_query',
           'mcp__clay__clay_enrich_person',
           'mcp__clay__clay_enrich_company',
           'mcp__clay__clay_check_quota',

@@ -21,9 +21,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 
-# Pre-install postgres MCP server globally (as root, before switching user)
-RUN npm install -g @modelcontextprotocol/server-postgres
-
 # Create app dir with the non-root `node` user (UID 1000, built into the image)
 WORKDIR /app
 RUN chown -R node:node /app
