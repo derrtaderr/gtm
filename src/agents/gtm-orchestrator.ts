@@ -50,8 +50,12 @@ export async function runGTMPipeline(
         permissionMode: 'bypassPermissions',
         mcpServers: {
           database: {
-            command: 'npx',
-            args: ['-y', '@modelcontextprotocol/server-postgres', process.env.DATABASE_URL!],
+            // Use globally-installed postgres MCP server (pre-installed in Dockerfile)
+            // Falls back to npx in dev environments where it's not globally installed.
+            command: process.env.NODE_ENV === 'production' ? 'mcp-server-postgres' : 'npx',
+            args: process.env.NODE_ENV === 'production'
+              ? [process.env.DATABASE_URL!]
+              : ['-y', '@modelcontextprotocol/server-postgres', process.env.DATABASE_URL!],
           },
           clay: clayServer,
           proxycurl: proxycurlServer,
