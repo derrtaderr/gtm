@@ -52,10 +52,15 @@ export async function runGTMPipeline(
         executable: 'node',
         // Use /tmp as cwd so the SDK has a writable directory for any temporary files
         cwd: '/tmp',
-        // Pass through env vars the SDK needs
+        // Pass through env vars the SDK needs + enable SDK debug logging
         env: {
           ...process.env,
           HOME: '/tmp',
+          DEBUG_CLAUDE_AGENT_SDK: '1',
+        },
+        // Capture stderr from the Claude Code subprocess for debugging
+        stderr: (data: string) => {
+          console.error(`[GTM:stderr] ${data.trimEnd()}`);
         },
         mcpServers: {
           database: {
