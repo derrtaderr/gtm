@@ -48,6 +48,15 @@ export async function runGTMPipeline(
         maxTurns: 25,
         persistSession: false,
         permissionMode: 'bypassPermissions',
+        // Explicitly use Node runtime — auto-detection can fail in slim containers
+        executable: 'node',
+        // Use /tmp as cwd so the SDK has a writable directory for any temporary files
+        cwd: '/tmp',
+        // Pass through env vars the SDK needs
+        env: {
+          ...process.env,
+          HOME: '/tmp',
+        },
         mcpServers: {
           database: {
             // Use globally-installed postgres MCP server (pre-installed in Dockerfile)
@@ -102,6 +111,13 @@ export async function runGTMPipeline(
     }
   } catch (error) {
     console.error(`[GTM] Pipeline error:`, error instanceof Error ? error.message : error);
+    if (error instanceof Error && error.stack) {
+      console.error(`[GTM] Stack:`, error.stack);
+    }
+    // Surface any underlying cause (Node 16+ supports error.cause)
+    if (error instanceof Error && 'cause' in error && error.cause) {
+      console.error(`[GTM] Cause:`, error.cause);
+    }
   }
 
   return result;
