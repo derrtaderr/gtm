@@ -150,7 +150,7 @@ function buildPrompt(triggerType: string, payload?: unknown): string {
         '',
         '1. RE-SCORE: Find monitoring leads with new signals since their last score:',
         '   SELECT l.id FROM leads l JOIN icp_scores s ON l.id = s.lead_id',
-        '   WHERE l.status = \'monitoring\' AND EXISTS (SELECT 1 FROM signals WHERE lead_id = l.id AND created_at > s.scored_at)',
+        '   WHERE l.status = \'monitoring\' AND EXISTS (SELECT 1 FROM signals WHERE lead_id = l.id AND created_at > s.created_at)',
         '   For each, delegate to the icp-scorer agent for re-scoring.',
         '',
         '2. ADS SYNC: Query retarget_audience where synced_to_linkedin = false.',
