@@ -42,11 +42,17 @@ app.post('/webhook/rb2b', async (req, res) => {
     return;
   }
 
+  // Log the raw body so we can see RB2B's actual field names
+  console.log('[Webhook] RB2B raw payload:', JSON.stringify(req.body));
+
   // Parse the RB2B payload
   const signal = parseRB2BWebhook(req.body);
   if (!signal) {
-    console.warn('[Webhook] Invalid RB2B payload — missing linkedin_url');
-    res.status(400).json({ error: 'Invalid payload: linkedin_url is required' });
+    console.warn('[Webhook] Invalid RB2B payload — missing linkedin_url. Received fields:', Object.keys(req.body || {}));
+    res.status(400).json({
+      error: 'Invalid payload: linkedin_url is required',
+      received_fields: Object.keys(req.body || {}),
+    });
     return;
   }
 
