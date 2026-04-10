@@ -1,153 +1,115 @@
 /**
- * Clay MCP Server — Custom in-process MCP server for Clay API enrichment
+ * Clay MCP Server — Bidirectional webhook integration
+ *
+ * Clay's API model is webhook-based, not REST CRUD. Each Clay table has a
+ * unique webhook URL that accepts POSTs to add rows. Clay processes the row
+ * asynchronously through configured enrichment columns, then can POST results
+ * back to our /webhook/clay endpoint via an HTTP API column at the end of the
+ * Clay table.
+ *
+ * This MCP server handles the OUTBOUND push (agent → Clay).
+ * The INBOUND callback (Clay → us) is handled by /webhook/clay in server.ts.
+ *
+ * Setup in Clay UI:
+ * 1. Create a table for enrichment
+ * 2. Add a "Monitor Webhook" source — copy the webhook URL into CLAY_WEBHOOK_URL
+ * 3. Add enrichment columns (Person enrichment, Company enrichment, etc.)
+ * 4. Add a final "HTTP API" column that POSTs to {RAILWAY_URL}/webhook/clay
+ *    with the enriched fields + the original lead_id we sent
  *
  * Tools:
- * - clay_enrich_person: Enrich a person by LinkedIn URL or email
- * - clay_enrich_company: Enrich a company by name or domain
- * - clay_check_quota: Check remaining free tier quota
+ * - clay_push_for_enrichment: Fire-and-forget push of a LinkedIn URL for enrichment
  */
 
 import { tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 
-const CLAY_API_BASE = 'https://api.clay.com/v1';
-
-function getClayHeaders(): HeadersInit {
-  return {
-    'Authorization': `Bearer ${process.env.CLAY_API_KEY}`,
-    'Content-Type': 'application/json',
-  };
-}
-
-const clayEnrichPerson = tool(
-  'clay_enrich_person',
-  'Enrich a person record by LinkedIn URL or email via Clay. Returns title, company, industry, location, and other available fields.',
+const clayPushForEnrichment = tool(
+  'clay_push_for_enrichment',
+  'Push a LinkedIn URL to the Clay enrichment pipeline (FIRE AND FORGET). Returns immediately. Clay processes the row asynchronously and POSTs results back to our /webhook/clay endpoint when complete (typically 30-60 seconds). The agent should NOT wait for results — continue processing the lead with whatever data is available now. The lead will be automatically re-scored when Clay callback arrives. ALWAYS include the lead_id so the callback can correlate back to the right lead.',
   {
-    linkedin_url: z.string().optional().describe('LinkedIn profile URL'),
-    email: z.string().optional().describe('Work email address'),
+    lead_id: z.string().describe('Internal lead UUID — Clay will echo this back in the callback so we can find the lead'),
+    linkedin_url: z.string().describe('LinkedIn profile URL to enrich'),
+    company_name: z.string().optional().describe('Company name (if known) — assists Clay enrichment'),
+    company_domain: z.string().optional().describe('Company domain (if known)'),
+    email: z.string().optional().describe('Email address (if known) — assists Clay enrichment'),
   },
   async (args) => {
-    try {
-      if (!args.linkedin_url && !args.email) {
-        return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Either linkedin_url or email is required' }) }], isError: true };
-      }
-
-      const tableId = process.env.CLAY_TABLE_ID;
-      if (!tableId) {
-        return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'CLAY_TABLE_ID not configured' }) }], isError: true };
-      }
-
-      const response = await fetch(`${CLAY_API_BASE}/tables/${tableId}/rows`, {
-        method: 'POST',
-        headers: getClayHeaders(),
-        body: JSON.stringify({
-          data: {
-            ...(args.linkedin_url && { linkedin_url: args.linkedin_url }),
-            ...(args.email && { email: args.email }),
-          },
-        }),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        return { content: [{ type: 'text' as const, text: JSON.stringify({ error: `Clay API error ${response.status}: ${errorText}` }) }], isError: true };
-      }
-
-      const result = await response.json();
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
-    } catch (error) {
-      return { content: [{ type: 'text' as const, text: JSON.stringify({ error: `Clay enrich_person failed: ${error instanceof Error ? error.message : String(error)}` }) }], isError: true };
+    const webhookUrl = process.env.CLAY_WEBHOOK_URL;
+    if (!webhookUrl) {
+      return {
+        content: [{
+          type: 'text' as const,
+          text: JSON.stringify({
+            status: 'skipped',
+            reason: 'CLAY_WEBHOOK_URL not configured. Lead will continue without Clay enrichment.',
+          }),
+        }],
+      };
     }
-  }
-);
 
-const clayEnrichCompany = tool(
-  'clay_enrich_company',
-  'Enrich a company by name or domain via Clay. Returns industry, employee count, revenue range, website, and other firmographic data.',
-  {
-    company_name: z.string().optional().describe('Company name'),
-    domain: z.string().optional().describe('Company website domain'),
-  },
-  async (args) => {
     try {
-      if (!args.company_name && !args.domain) {
-        return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Either company_name or domain is required' }) }], isError: true };
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      // Optional auth token (Clay supports a custom header for webhook security)
+      if (process.env.CLAY_WEBHOOK_AUTH_TOKEN) {
+        headers['Authorization'] = `Bearer ${process.env.CLAY_WEBHOOK_AUTH_TOKEN}`;
       }
 
-      const tableId = process.env.CLAY_TABLE_ID;
-      if (!tableId) {
-        return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'CLAY_TABLE_ID not configured' }) }], isError: true };
-      }
+      const payload = {
+        lead_id: args.lead_id,
+        linkedin_url: args.linkedin_url,
+        ...(args.company_name && { company_name: args.company_name }),
+        ...(args.company_domain && { company_domain: args.company_domain }),
+        ...(args.email && { email: args.email }),
+      };
 
-      const response = await fetch(`${CLAY_API_BASE}/tables/${tableId}/rows`, {
+      const response = await fetch(webhookUrl, {
         method: 'POST',
-        headers: getClayHeaders(),
-        body: JSON.stringify({
-          data: {
-            ...(args.company_name && { company_name: args.company_name }),
-            ...(args.domain && { domain: args.domain }),
-          },
-        }),
+        headers,
+        body: JSON.stringify(payload),
       });
 
       if (!response.ok) {
-        const errorText = await response.text();
-        return { content: [{ type: 'text' as const, text: JSON.stringify({ error: `Clay API error ${response.status}: ${errorText}` }) }], isError: true };
+        const errorText = await response.text().catch(() => '');
+        return {
+          content: [{
+            type: 'text' as const,
+            text: JSON.stringify({
+              status: 'error',
+              error: `Clay webhook returned ${response.status}: ${errorText}`,
+            }),
+          }],
+          isError: true,
+        };
       }
-
-      const result = await response.json();
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
-    } catch (error) {
-      return { content: [{ type: 'text' as const, text: JSON.stringify({ error: `Clay enrich_company failed: ${error instanceof Error ? error.message : String(error)}` }) }], isError: true };
-    }
-  }
-);
-
-const clayCheckQuota = tool(
-  'clay_check_quota',
-  'Check remaining Clay free tier quota. Free tier allows 200 rows per table. Returns remaining row count.',
-  {},
-  async () => {
-    try {
-      const tableId = process.env.CLAY_TABLE_ID;
-      if (!tableId) {
-        return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'CLAY_TABLE_ID not configured' }) }], isError: true };
-      }
-
-      const response = await fetch(`${CLAY_API_BASE}/tables/${tableId}`, {
-        method: 'GET',
-        headers: getClayHeaders(),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        return { content: [{ type: 'text' as const, text: JSON.stringify({ error: `Clay API error ${response.status}: ${errorText}` }) }], isError: true };
-      }
-
-      const table = await response.json();
-      const rowCount = table.row_count ?? 0;
-      const maxRows = 200; // Free tier limit
-      const remaining = Math.max(0, maxRows - rowCount);
 
       return {
         content: [{
           type: 'text' as const,
           text: JSON.stringify({
-            remaining,
-            used: rowCount,
-            total: maxRows,
-            quota_exceeded: remaining === 0,
+            status: 'pushed',
+            message: 'Lead pushed to Clay for async enrichment. Results will arrive via /webhook/clay callback (typically 30-60 sec). Continue processing — do not wait.',
+            lead_id: args.lead_id,
           }),
         }],
       };
     } catch (error) {
-      return { content: [{ type: 'text' as const, text: JSON.stringify({ error: `Clay check_quota failed: ${error instanceof Error ? error.message : String(error)}` }) }], isError: true };
+      return {
+        content: [{
+          type: 'text' as const,
+          text: JSON.stringify({
+            status: 'error',
+            error: `Clay push failed: ${error instanceof Error ? error.message : String(error)}`,
+          }),
+        }],
+        isError: true,
+      };
     }
   }
 );
 
 export const clayServer = createSdkMcpServer({
   name: 'clay',
-  version: '1.0.0',
-  tools: [clayEnrichPerson, clayEnrichCompany, clayCheckQuota],
+  version: '2.0.0',
+  tools: [clayPushForEnrichment],
 });

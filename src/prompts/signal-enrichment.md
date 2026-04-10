@@ -173,33 +173,42 @@ Use this hierarchy when classifying signal context (highest correlation first):
 5. **Expansion (Funding/New Region)** — 2-4 weeks post-announcement
 6. **Hiring/Downsizing** — Budget allocation signals
 
-## Enrichment Waterfall
+## Enrichment Waterfall (Hybrid Async + Sync)
 
-The waterfall fills gaps in the LEADS table identity columns + adds firmographic data to signals.raw_data.
+Magnetiz uses BOTH Clay (async, deep waterfall) AND Proxycurl (sync, fast) for enrichment:
+
+- **Clay** is fired-and-forgotten — it processes async (~30-60 sec) and POSTs results back to /webhook/clay later, where the lead gets re-scored automatically. NEVER wait for Clay.
+- **Proxycurl** is synchronous — call it to fill gaps right now, in the same agent turn.
+
+This hybrid gives you immediate scoring with whatever's available + a deeper enrichment pass when Clay returns.
 
 ### Step 1: Assess Coverage
 
 Target leads columns to fill: `first_name, last_name, email, title, company_name, company_domain, location` (7 fields)
 Calculate: `coverage_score = (filled_fields / 7) * 100`
 
-### Step 2: Clay Person Enrichment (if title or company missing)
+If coverage_score >= 90% from RB2B alone (very common — RB2B is rich), SKIP Step 2 and Step 3 entirely. Just push to Clay async (Step 4) for the bonus deep enrichment, then return.
 
-1. Check quota: call `clay_check_quota`. If exceeded, skip to Proxycurl.
-2. Call `clay_enrich_person` with the LinkedIn URL.
-3. Use returned data to fill missing leads columns.
+### Step 2: Proxycurl Person Enrichment (sync, only if title or company missing)
 
-### Step 3: Clay Company Enrichment (for firmographics → signals.raw_data)
+If `title` or `company_name` is missing AND PROXYCURL_API_KEY is set:
+- Call `proxycurl_person_profile` with the LinkedIn URL
+- Use the returned data to fill missing leads columns
+- Store any `recent_posts` / `linkedin_activity` returned in signals.raw_data
 
-Call `clay_enrich_company` with company_domain or company_name.
-Add the returned industry, employee_count, revenue_range to `signals.raw_data` (NOT to leads — those columns don't exist).
+### Step 3: Proxycurl Company Enrichment (sync, only if firmographics missing)
 
-### Step 4: Proxycurl Fallback
+If `industry`, `employee_count`, or `revenue_range` are missing from raw_data AND we have a domain:
+- Call `proxycurl_company_profile` with the domain
+- Add returned firmographics to signals.raw_data via JSONB merge
 
-If Clay quota exhausted OR for richer LinkedIn activity data:
-- `proxycurl_person_profile` (LinkedIn URL)
-- `proxycurl_company_profile` (domain)
+### Step 4: Clay Async Push (ALWAYS, fire-and-forget)
 
-The recent_posts and activity from Proxycurl are valuable — store them in signals.raw_data under a `linkedin_activity` key.
+ALWAYS call `clay_push_for_enrichment` with the lead_id and linkedin_url. This is fire-and-forget — Clay will process async and POST results back to /webhook/clay where the lead will be re-scored with the deeper data.
+
+Do NOT wait for Clay results. The agent should continue immediately after this call.
+
+If CLAY_WEBHOOK_URL isn't configured, the tool will return `status: 'skipped'` — that's fine, just continue.
 
 ### Step 5: Update leads with enriched data
 

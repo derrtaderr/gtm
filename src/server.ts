@@ -102,6 +102,48 @@ app.post('/webhook/goextrovert', async (req, res) => {
 });
 
 // ============================================================
+// Webhook: Clay enrichment callback
+// ============================================================
+
+app.post('/webhook/clay', async (req, res) => {
+  // Optional auth check
+  const expectedSecret = process.env.CLAY_CALLBACK_SECRET;
+  if (expectedSecret) {
+    const providedSecret = req.headers['x-clay-secret'] || req.headers['authorization'];
+    const matches =
+      providedSecret === expectedSecret ||
+      providedSecret === `Bearer ${expectedSecret}`;
+    if (!matches) {
+      console.warn('[Webhook] Clay callback rejected — invalid secret');
+      res.status(401).json({ error: 'Invalid secret' });
+      return;
+    }
+  }
+
+  const payload = req.body;
+  console.log('[Webhook] Clay enrichment callback received:', JSON.stringify(payload).slice(0, 500));
+
+  // We need at least lead_id (or linkedin_url as fallback) to find the lead
+  const leadId = payload?.lead_id;
+  const linkedinUrl = payload?.linkedin_url || payload?.['LinkedIn URL'];
+
+  if (!leadId && !linkedinUrl) {
+    console.warn('[Webhook] Clay callback missing both lead_id and linkedin_url');
+    res.status(400).json({ error: 'Missing lead_id or linkedin_url' });
+    return;
+  }
+
+  // Respond immediately, process async
+  res.status(200).json({ received: true });
+
+  try {
+    await runGTMPipeline('clay_callback', payload);
+  } catch (error) {
+    console.error('[Webhook] Clay callback processing error:', error instanceof Error ? error.message : error);
+  }
+});
+
+// ============================================================
 // Cron Jobs
 // ============================================================
 
@@ -140,6 +182,7 @@ app.listen(PORT, () => {
   console.log(`  GET  /health`);
   console.log(`  POST /webhook/rb2b`);
   console.log(`  POST /webhook/goextrovert`);
+  console.log(`  POST /webhook/clay`);
   console.log(`[Server] Cron jobs:`);
   console.log(`  Daily 9am ET  — GoExtrovert push/pull sync`);
   console.log(`  Weekly Mon 8am ET — Ads sync, re-scoring, metrics`);

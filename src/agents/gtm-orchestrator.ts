@@ -31,7 +31,7 @@ const scorerPrompt = readFileSync(join(__dirname, '../prompts/scorer.md'), 'utf-
  * Run the GTM pipeline for a given trigger.
  */
 export async function runGTMPipeline(
-  triggerType: 'webhook' | 'daily_goextrovert_sync' | 'weekly_sync',
+  triggerType: 'webhook' | 'daily_goextrovert_sync' | 'weekly_sync' | 'clay_callback',
   payload?: unknown
 ): Promise<SDKResultMessage | undefined> {
   const prompt = buildPrompt(triggerType, payload);
@@ -79,9 +79,7 @@ export async function runGTMPipeline(
         allowedTools: [
           'Agent',
           'mcp__database__db_query',
-          'mcp__clay__clay_enrich_person',
-          'mcp__clay__clay_enrich_company',
-          'mcp__clay__clay_check_quota',
+          'mcp__clay__clay_push_for_enrichment',
           'mcp__proxycurl__proxycurl_person_profile',
           'mcp__proxycurl__proxycurl_company_profile',
           'mcp__goextrovert__goextrovert_add_prospect',
@@ -168,6 +166,49 @@ function buildPrompt(triggerType: string, payload?: unknown): string {
         '     CURRENT_DATE, \'1 day\'::interval) d;',
         '',
         '5. Report: how many leads re-scored, how many graduated, audience synced, metrics populated.',
+      ].join('\n');
+
+    case 'clay_callback':
+      return [
+        'Clay enrichment callback received. The lead was previously pushed to Clay for async enrichment, and Clay has now POSTed back the enriched data.',
+        '',
+        'Process this callback in 5 steps:',
+        '',
+        '1. FIND THE LEAD: Use the lead_id from the payload to find the lead:',
+        '   SELECT id, status, first_name, last_name, title, company_name, company_domain, email FROM leads WHERE id = $1',
+        '   (If lead_id is missing, fall back to looking up by linkedin_url)',
+        '   If lead.manual_override = true, SKIP entirely.',
+        '',
+        '2. UPDATE LEAD COLUMNS with newly enriched data (use COALESCE to preserve existing values where the new value is null/empty):',
+        '   UPDATE leads SET',
+        '     first_name = COALESCE(NULLIF($2, \'\'), first_name),',
+        '     last_name = COALESCE(NULLIF($3, \'\'), last_name),',
+        '     email = COALESCE(NULLIF($4, \'\'), email),',
+        '     title = COALESCE(NULLIF($5, \'\'), title),',
+        '     company_name = COALESCE(NULLIF($6, \'\'), company_name),',
+        '     company_domain = COALESCE(NULLIF($7, \'\'), company_domain),',
+        '     location = COALESCE(NULLIF($8, \'\'), location),',
+        '     coverage_score = $9,',
+        '     status = \'enriched\',',
+        '     last_agent_action = \'Enriched via Clay (async)\',',
+        '     last_agent_action_at = now(),',
+        '     updated_at = now()',
+        '   WHERE id = $1;',
+        '',
+        '3. MERGE FIRMOGRAPHIC DATA into the most recent signal\'s raw_data JSONB:',
+        '   UPDATE signals SET raw_data = raw_data || $2::jsonb',
+        '   WHERE lead_id = $1 AND id = (SELECT id FROM signals WHERE lead_id = $1 ORDER BY created_at DESC LIMIT 1);',
+        '   The merged JSONB should include any new fields from Clay: industry, employee_count, revenue_range, recent_posts, linkedin_activity, etc.',
+        '',
+        '4. LOG enrichment_completed to agent_activity_log:',
+        '   INSERT INTO agent_activity_log (lead_id, agent_name, action_type, action_detail, status)',
+        '   VALUES ($1, \'Enrichment Agent\', \'enrichment_completed\', $2::jsonb, \'success\');',
+        '   action_detail should include: { "source": "clay", "trigger": "clay_callback", "fields_added": [...] }',
+        '',
+        '5. RE-SCORE: Delegate to the icp-scorer agent to re-score this lead with the new data. The scorer will detect this is a re-score (existing icp_scores row), update the score, and route accordingly. If the lead crosses the 75 threshold, it will be queued for GoExtrovert.',
+        '',
+        'Clay payload (the data Clay sent back):',
+        JSON.stringify(payload, null, 2),
       ].join('\n');
 
     default:
